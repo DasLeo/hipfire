@@ -913,6 +913,36 @@ pub fn entries(arch: &str, extra_flags: &str) -> Result<Vec<KernelEntry>, Regist
             kernels::GEMM_GATE_UP_MQ4G256V2_WMMA_FP8_GFX12_V2_B128X128_SRC,
             ["gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201"]
         );
+        // gfx1201 residual FP8-WMMA small-batch fallbacks (the "later stage"
+        // deferred above): for batch_size in 64..=255 the residual launcher
+        // (o_proj / mlp down) selects a sub-256 batch tile instead of the
+        // v2 128x128 form — s2bt8 when the two-slab path is armed
+        // (batch%128==0; HIPFIRE_GFX12_MQ4V2_FP8_SLABS != "1"), bt12 at
+        // batch%192==0 (192) or the masked tail, bt8 at batch%128==0 under
+        // SLABS=1, else bt4. All four fire on the closed 27B AR route for some
+        // prefill-chunk size, so all four must be corpus entries. gemm bt4 was
+        // the captured refusal (a ~110-token prefill chunk). These were stalely
+        // allowlisted as "config-opt-in: kernel.iu".
+        add!(
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8",
+            kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_S2BT8_SRC,
+            ["gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8"]
+        );
+        add!(
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12",
+            kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT12_SRC,
+            ["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12"]
+        );
+        add!(
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8",
+            kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT8_SRC,
+            ["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8"]
+        );
+        add!(
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4",
+            kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT4_SRC,
+            ["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4"]
+        );
         add!(
             "gemm_mq4g256v2_residual_wmma_gfx12_vt",
             kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_GFX12_VT_SRC,
@@ -6402,6 +6432,27 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         "gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201",
         &["gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201"],
     ),
+    // Residual FP8-WMMA small-batch fallbacks (batch_size 64..=255): s2bt8,
+    // bt12, bt8 and bt4 are all reached on the closed 27B AR route for some
+    // prefill-chunk size (see the matching entries() block). Absent from the
+    // plan, admit_unplanned refused the prefill at the first such module
+    // (gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4 for a ~110-token chunk).
+    (
+        "gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8",
+        &["gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8"],
+    ),
+    (
+        "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12",
+        &["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12"],
+    ),
+    (
+        "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8",
+        &["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8"],
+    ),
+    (
+        "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4",
+        &["gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4"],
+    ),
     (
         "gemm_mq4g256v2_residual_wmma_gfx12_vt",
         &[
@@ -10425,6 +10476,28 @@ mod tests {
                 "{module} must not be a P0 module"
             );
         }
+        // The residual FP8-WMMA small-batch fallbacks (batch 64..=255) the
+        // bt4 coverage fix registered: s2bt8 / bt12 / bt8 / bt4. gemm bt4 was
+        // the captured refusal; the siblings share its dispatch site. Also
+        // reconciles the inventory count (registered without touching the sum).
+        const FP8_V2_WMMA_RESID_SMALLBATCH_ADDED_MODULES: [&str; 4] = [
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8",
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12",
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8",
+            "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4",
+        ];
+        for module in FP8_V2_WMMA_RESID_SMALLBATCH_ADDED_MODULES {
+            assert!(
+                by_name.contains_key(module),
+                "missing residual fp8 WMMA small-batch module {module}"
+            );
+            assert!(
+                !expected
+                    .lines()
+                    .any(|l| l.split('\t').next() == Some(module)),
+                "{module} must not be a P0 module"
+            );
+        }
         assert_eq!(
             registry.len(),
             count
@@ -10441,7 +10514,8 @@ mod tests {
                 + MQ4RS_DECODE_ADDED_MODULES.len()
                 + HD64_FLASH_TILE_ADDED_MODULES.len()
                 + FP8_SPLIT_LSE_ADDED_MODULES.len()
-                + FP8_V2_WMMA_SIGMOID_ADDED_MODULES.len(),
+                + FP8_V2_WMMA_SIGMOID_ADDED_MODULES.len()
+                + FP8_V2_WMMA_RESID_SMALLBATCH_ADDED_MODULES.len(),
             "unexpected gfx1201 inventory size"
         );
         let default_prefill = by_name
@@ -12563,12 +12637,15 @@ extern "C" __global__ void NAMED(int* p) {}
             // exactly its one entry symbol. A missing module or a symbol the
             // index omits fails the sealed-plan build, so this pins the exact
             // module + symbol + source triple the loader will compile.
-            assert!(ar_plan.entries.iter().any(|e| matches!(
-                e, PlannedKernel::Hip(entry)
-                if entry.module == "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"
-                    && entry.symbols == ["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"]
-                    && entry.source() == kernels::SIGMOID_MUL_MQ_ROTATE_X_FP8_INREG_GFX12_SRC
-            )), "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 must plan its registered source+symbol");
+            assert!(
+                ar_plan.entries.iter().any(|e| matches!(
+                    e, PlannedKernel::Hip(entry)
+                    if entry.module == "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"
+                        && entry.symbols == ["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"]
+                        && entry.source() == kernels::SIGMOID_MUL_MQ_ROTATE_X_FP8_INREG_GFX12_SRC
+                )),
+                "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 must plan its registered source+symbol"
+            );
             // gfx1201 staged-tile v2 FP8-WMMA prefill GEMMs (default ON:
             // gfx12_mq4v2_fp8_v2 defaults to arch==gfx1201). For batch_size>=256
             // on the closed 27B fp8-KV route the 128x128 non-symfold consumer
@@ -12591,12 +12668,53 @@ extern "C" __global__ void NAMED(int* p) {}
                     ar_plan.entries.iter().any(|e| e.module() == module),
                     "closed AR route must plan the v2 fp8 WMMA module {module}"
                 );
+                assert!(
+                    ar_plan.entries.iter().any(|e| matches!(
+                        e, PlannedKernel::Hip(entry)
+                        if entry.module == module
+                            && entry.symbols == [module]
+                            && entry.source() == src
+                    )),
+                    "v2 fp8 WMMA module {module} must plan its registered source+symbol"
+                );
+            }
+            // Residual FP8-WMMA small-batch fallbacks (batch 64..=255): the
+            // o_proj / mlp down residual dispatches s2bt8 / bt12 / bt8 / bt4 for
+            // sub-256 prefill chunks (bt4 captured for a ~110-token chunk;
+            // s2bt8 at batch%128==0, bt12 at batch%192==0 or the masked tail,
+            // bt8 at batch%128==0 under SLABS=1, else bt4). Absent from the plan,
+            // admit_unplanned refused the prefill at the first such module
+            // ("gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4 ... outside this
+            // load's planned kernel route"). The sealed AR route must plan all
+            // four, each with its registered source+symbol.
+            for (module, src) in [
+                (
+                    "gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8",
+                    kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_S2BT8_SRC,
+                ),
+                (
+                    "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt12",
+                    kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT12_SRC,
+                ),
+                (
+                    "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8",
+                    kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT8_SRC,
+                ),
+                (
+                    "gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt4",
+                    kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_BT4_SRC,
+                ),
+            ] {
+                assert!(
+                    ar_plan.entries.iter().any(|e| e.module() == module),
+                    "closed AR route must plan the residual fp8 WMMA small-batch module {module}"
+                );
                 assert!(ar_plan.entries.iter().any(|e| matches!(
                     e, PlannedKernel::Hip(entry)
                     if entry.module == module
                         && entry.symbols == [module]
                         && entry.source() == src
-                )), "v2 fp8 WMMA module {module} must plan its registered source+symbol");
+                )), "residual fp8 WMMA small-batch module {module} must plan its registered source+symbol");
             }
             // Native-fp8 split-KV FA2 verifier attention: the MTP (K+1)-row
             // verify at live_ctx >= 8192 dispatches AttnFp8E4m3KvBatchedMasked
