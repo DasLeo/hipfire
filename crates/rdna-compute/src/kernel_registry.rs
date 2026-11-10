@@ -6554,6 +6554,25 @@ const QWEN36_27B_GFX1201_MTP_HIP: &[RouteHip] = &[
         &["attention_flash_q8_0_reduce"],
     ),
     ("attention_flash_q8_0_tile", &["attention_flash_q8_0_tile"]),
+    // Native-fp8 split-KV FA2 verifier attention (gfx1201 H24/KV4/D256): the
+    // MTP (K+1)-row verify at live_ctx >= 8192 dispatches
+    // AttnFp8E4m3KvBatchedMasked through the split-KV fp8 path (batch 2..=16).
+    // AR decode runs batch 1 and never reaches it, so it is MTP-plan-only.
+    // One module (named for the partial symbol the launcher requests) carries
+    // the partial/merge/Q-preconvert symbols; the f16 entry shares the source
+    // but is bound by the Q0 launcher, not this route. Absent from the MTP
+    // plan, admit_unplanned refused VeriLoop-E2 --spec mtp large-context step
+    // ("attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201 ... outside this load's
+    // planned kernel route").
+    (
+        "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+        &[
+            "attention_fp8_e4m3_fa2_gqa_f16_gfx1201",
+            "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+            "attention_fp8_e4m3_fa2_gqa_merge_lse_gfx1201",
+            "attention_fp8_e4m3_fa2_q_preconvert_lse_gfx1201",
+        ],
+    ),
     ("conv1d_silu_split", &["conv1d_silu_split_f32"]),
     ("deinterleave", &["deinterleave_f32"]),
     ("deinterleave_batched", &["deinterleave_f32_batched"]),
@@ -12579,6 +12598,33 @@ extern "C" __global__ void NAMED(int* p) {}
                         && entry.source() == src
                 )), "v2 fp8 WMMA module {module} must plan its registered source+symbol");
             }
+            // Native-fp8 split-KV FA2 verifier attention: the MTP (K+1)-row
+            // verify at live_ctx >= 8192 dispatches AttnFp8E4m3KvBatchedMasked
+            // through the split-KV fp8 path (H24/KV4/D256, batch 2..=16); AR
+            // decode (batch 1) never reaches it, so it is MTP-plan-only.
+            // Absent from the MTP plan, admit_unplanned refused VeriLoop-E2
+            // --spec mtp large-context step ("attention_fp8_e4m3_fa2_gqa
+            // _partial_lse_gfx1201 ... outside this load's planned kernel
+            // route"). The sealed MTP route must plan it (one module object
+            // carries the partial/merge/preconvert symbols; the f16 entry
+            // shares the source but is bound by the Q0 launcher, not here).
+            assert!(
+                plan.entries
+                    .iter()
+                    .any(|e| e.module() == "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201"),
+                "closed MTP route must plan the fp8 split-KV FA2 verifier attention module"
+            );
+            assert!(plan.entries.iter().any(|e| matches!(
+                e, PlannedKernel::Hip(entry)
+                if entry.module == "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201"
+                    && entry.symbols == [
+                        "attention_fp8_e4m3_fa2_gqa_f16_gfx1201",
+                        "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+                        "attention_fp8_e4m3_fa2_gqa_merge_lse_gfx1201",
+                        "attention_fp8_e4m3_fa2_q_preconvert_lse_gfx1201"
+                    ]
+                    && entry.source() == kernels::ATTENTION_FP8_E4M3_FA2_GQA_SPLIT_LSE_GFX1201_SRC
+            )), "fp8 split-KV FA2 verifier must plan its registered source+symbols");
         }
     }
 
