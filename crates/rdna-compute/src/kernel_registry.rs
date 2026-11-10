@@ -6421,6 +6421,19 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         "qwen35_fa_prep_batched_gfx1201",
         &["qwen35_fa_prep_batched_gfx1201"],
     ),
+    // Gated FP8Q batched FA-prep for gfx1201: selected by
+    // qwen35_fa_prep_batched_gfx1201() when the Q-resident fp8q prologue is
+    // admitted (gfx12_fa_prep_fp8q) AND the sigmoid gate is copied out-of-place
+    // (fa_gate_in_place = false — this 27B H24/KV4 route is not A4/IU4, so the
+    // FP8-stream residual producer is not admitted and the gate is written
+    // separately). The f32 and fp8q-nogate twins were already planned; this
+    // gated twin was not, so admit_unplanned refused the large-prompt batched
+    // FA prefill ("qwen35_fa_prep_fp8q_batched_gfx1201 ... outside this load's
+    // planned kernel route", VeriLoop-E2 MTP-OFF prefill).
+    (
+        "qwen35_fa_prep_fp8q_batched_gfx1201",
+        &["qwen35_fa_prep_fp8q_batched_gfx1201"],
+    ),
     (
         "qwen35_fa_prep_fp8q_nogate_batched_gfx1201",
         &["qwen35_fa_prep_fp8q_nogate_batched_gfx1201"],
@@ -12413,6 +12426,19 @@ extern "C" __global__ void NAMED(int* p) {}
                     .iter()
                     .any(|e| e.module() == "gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r"),
                 "closed AR route must plan the iu4 g12r module for linear_attn prefill"
+            );
+            // Large-prompt batched FA prefill on this fp8 KV route dispatches the
+            // gated fp8q fa_prep variant (gfx12_fa_prep_fp8q + out-of-place gate
+            // copy, fa_gate_in_place = false). The sealed AR route must plan it,
+            // else admit_unplanned refuses the prefill (VeriLoop-E2 MTP-OFF:
+            // "qwen35_fa_prep_fp8q_batched_gfx1201 ... outside this load's planned
+            // kernel route"). The f32 and fp8q-nogate twins share this fixture.
+            assert!(
+                ar_plan
+                    .entries
+                    .iter()
+                    .any(|e| e.module() == "qwen35_fa_prep_fp8q_batched_gfx1201"),
+                "closed AR route must plan the gated fp8q fa_prep module"
             );
         }
     }
