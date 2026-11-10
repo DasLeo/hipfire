@@ -895,6 +895,24 @@ pub fn entries(arch: &str, extra_flags: &str) -> Result<Vec<KernelEntry>, Regist
                 "gemm_mq4g256v2_residual_wmma_gfx12_ldsstage",
             ]
         );
+        // gfx1201 staged-tile v2 FP8-WMMA prefill GEMMs (default ON:
+        // gfx12_mq4v2_fp8_v2 defaults to arch==gfx1201). The consumer launchers
+        // pick the measured 128x128 geometry (fp8_v2_geom) for batch_size>=256,
+        // non-symfold (this MQ4 route is not mq4v2_symmetric). Both the residual
+        // (attention o_proj and mlp down) and gate/up halves fire on the closed
+        // 27B fp8-KV route, so both must be corpus entries; the s2bt8/BT
+        // fallbacks for batch<256 stay a separate, later stage. These were
+        // stalely allowlisted as "config-opt-in: kernel.iu".
+        add!(
+            "gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201",
+            kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_V2_B128X128_SRC,
+            ["gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201"]
+        );
+        add!(
+            "gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201",
+            kernels::GEMM_GATE_UP_MQ4G256V2_WMMA_FP8_GFX12_V2_B128X128_SRC,
+            ["gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201"]
+        );
         add!(
             "gemm_mq4g256v2_residual_wmma_gfx12_vt",
             kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_GFX12_VT_SRC,
@@ -6332,6 +6350,15 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         "gemm_gate_up_hfq4g256_wmma_gfx12_mq4v2",
         &["gemm_gate_up_mq4g256v2_wmma_gfx12"],
     ),
+    // Staged-tile v2 FP8-WMMA gate/up prefill GEMM (default ON on gfx1201,
+    // 128x128 geometry, batch_size>=256, non-symfold). Absent from the plan,
+    // admit_unplanned refused VeriLoop-E2 MTP-OFF large-prompt prefill at the
+    // mlp gate/up consume step ("gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201
+    // ... outside this load's planned kernel route"). Registered in entries().
+    (
+        "gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201",
+        &["gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201"],
+    ),
     (
         "gemm_gate_up_mq4g256v2_wmma_gfx12_vt",
         &[
@@ -6364,6 +6391,16 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
             "gemm_mq4g256v2_residual_mmq_iu4_g12r",
             "quantize_int4_mmq_ds128",
         ],
+    ),
+    // Staged-tile v2 FP8-WMMA residual prefill GEMM (default ON on gfx1201,
+    // 128x128 geometry, batch_size>=256, non-symfold): the attention o_proj and
+    // mlp down residual consumers. Absent from the plan, admit_unplanned
+    // refused VeriLoop-E2 MTP-OFF large-prompt prefill ("gemm_mq4g256v2_residual
+    // _wmma_fp8_v2_b128x128_gfx1201 ... outside this load's planned kernel
+    // route"). Registered in entries().
+    (
+        "gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201",
+        &["gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201"],
     ),
     (
         "gemm_mq4g256v2_residual_wmma_gfx12_vt",
@@ -12489,6 +12526,35 @@ extern "C" __global__ void NAMED(int* p) {}
                     && entry.symbols == ["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"]
                     && entry.source() == kernels::SIGMOID_MUL_MQ_ROTATE_X_FP8_INREG_GFX12_SRC
             )), "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 must plan its registered source+symbol");
+            // gfx1201 staged-tile v2 FP8-WMMA prefill GEMMs (default ON:
+            // gfx12_mq4v2_fp8_v2 defaults to arch==gfx1201). For batch_size>=256
+            // on the closed 27B fp8-KV route the 128x128 non-symfold consumer
+            // GEMMs fire for the mlp gate/up and the attention o_proj / mlp down
+            // residual. Absent from the plan, admit_unplanned refused the
+            // large-prompt prefill ("gemm_..._residual_wmma_fp8_v2_b128x128_gfx1201
+            // ... outside this load's planned kernel route"). The sealed AR
+            // route must plan both halves.
+            for (module, src) in [
+                (
+                    "gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201",
+                    kernels::GEMM_MQ4G256V2_RESIDUAL_WMMA_FP8_GFX12_V2_B128X128_SRC,
+                ),
+                (
+                    "gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201",
+                    kernels::GEMM_GATE_UP_MQ4G256V2_WMMA_FP8_GFX12_V2_B128X128_SRC,
+                ),
+            ] {
+                assert!(
+                    ar_plan.entries.iter().any(|e| e.module() == module),
+                    "closed AR route must plan the v2 fp8 WMMA module {module}"
+                );
+                assert!(ar_plan.entries.iter().any(|e| matches!(
+                    e, PlannedKernel::Hip(entry)
+                    if entry.module == module
+                        && entry.symbols == [module]
+                        && entry.source() == src
+                )), "v2 fp8 WMMA module {module} must plan its registered source+symbol");
+            }
         }
     }
 

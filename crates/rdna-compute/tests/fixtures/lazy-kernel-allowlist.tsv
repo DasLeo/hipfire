@@ -441,7 +441,6 @@ module	gemm_gate_up_mq4g256v2_wmma_fp8_gfx12_bt8	config-opt-in	Non-default confi
 module	gemm_gate_up_mq4g256v2_wmma_fp8_gfx12_bt8_lut	codec-outside-core-rungs	MQ4G256V2Lloyd/MQ4Lloyd route absent from admitted core artifact rungs; rdna-compute/src/gemm.rs:35531-35560
 module	gemm_gate_up_mq4g256v2_wmma_fp8_gfx12_s2bt8	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_gate_up_mq4g256v2_wmma_fp8_gfx12_s2bt8_lut	codec-outside-core-rungs	MQ4G256V2Lloyd/MQ4Lloyd route absent from admitted core artifact rungs; rdna-compute/src/gemm.rs:35531-35560
-module	gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201_silu_h	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201_silu_h_bf16	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201_symfold	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
@@ -578,7 +577,6 @@ module	gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8	config-opt-in	Non-default conf
 module	gemm_mq4g256v2_residual_wmma_fp8_gfx12_bt8_lut	codec-outside-core-rungs	MQ4G256V2Lloyd/MQ4Lloyd route absent from admitted core artifact rungs; rdna-compute/src/gemm.rs:35531-35560
 module	gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_mq4g256v2_residual_wmma_fp8_gfx12_s2bt8_lut	codec-outside-core-rungs	MQ4G256V2Lloyd/MQ4Lloyd route absent from admitted core artifact rungs; rdna-compute/src/gemm.rs:35531-35560
-module	gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201_symfold	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_mq4g256v2_residual_wmma_fp8_v2_b128x64w4_gfx1201	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
 module	gemm_mq4g256v2_residual_wmma_fp8_v2_b128x64w4_gfx1201_symfold	config-opt-in	Non-default configuration: kernel.iu; rdna-compute/src/gemm.rs:11817
