@@ -10383,6 +10383,29 @@ mod tests {
                 "{module} must not be a P0 module"
             );
         }
+        // The sealed 27B fp8-KV route's fp8 producer/consumer additions, each
+        // default-on for gfx1201: the fp8-stream in-register sigmoid rotate
+        // producer (folds the gate into the FWHT rotate) and the staged-tile
+        // v2 FP8-WMMA b128x128 residual + gate/up prefill GEMMs (batch>=256).
+        // These were registered by the sealed-route fixes without bumping the
+        // P0-count sum below; this list reconciles the inventory.
+        const FP8_V2_WMMA_SIGMOID_ADDED_MODULES: [&str; 3] = [
+            "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12",
+            "gemm_mq4g256v2_residual_wmma_fp8_v2_b128x128_gfx1201",
+            "gemm_gate_up_mq4g256v2_wmma_fp8_v2_b128x128_gfx1201",
+        ];
+        for module in FP8_V2_WMMA_SIGMOID_ADDED_MODULES {
+            assert!(
+                by_name.contains_key(module),
+                "missing fp8 v2 WMMA / sigmoid rotate module {module}"
+            );
+            assert!(
+                !expected
+                    .lines()
+                    .any(|l| l.split('\t').next() == Some(module)),
+                "{module} must not be a P0 module"
+            );
+        }
         assert_eq!(
             registry.len(),
             count
@@ -10398,7 +10421,8 @@ mod tests {
                 + MOE_FRONT_ADDED_MODULES.len()
                 + MQ4RS_DECODE_ADDED_MODULES.len()
                 + HD64_FLASH_TILE_ADDED_MODULES.len()
-                + FP8_SPLIT_LSE_ADDED_MODULES.len(),
+                + FP8_SPLIT_LSE_ADDED_MODULES.len()
+                + FP8_V2_WMMA_SIGMOID_ADDED_MODULES.len(),
             "unexpected gfx1201 inventory size"
         );
         let default_prefill = by_name
