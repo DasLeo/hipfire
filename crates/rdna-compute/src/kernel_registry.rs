@@ -988,6 +988,19 @@ pub fn entries(arch: &str, extra_flags: &str) -> Result<Vec<KernelEntry>, Regist
             include_str!("../../../kernels/src/qwen35_fa_prep_batched.gfx1201.hip"),
             ["qwen35_fa_prep_batched_gfx1201"]
         );
+        // gfx1201 Q-resident fp8-stream FA out-proj producer: sigmoid gate *
+        // FWHT rotate + in-register MQ4V2 FP8 pack (no x_rot round trip). On the
+        // default route this fires when the fp8q FA-prep copied the gate out of
+        // place (fa_gate_in_place = false): gate = Some(Rows), awq = None,
+        // fp8_prod_inreg(k) with k <= 17408. `gfx12_fp8_stream`,
+        // `gfx12_mq4v2_fp8_resid` and `HIPFIRE_FP8_PROD_INREG` are all default-on
+        // for gfx1201, so this is a default-route module, not an opt-in (the
+        // lazy-kernel-allowlist row that said "config-opt-in" was stale).
+        add!(
+            "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12",
+            kernels::SIGMOID_MUL_MQ_ROTATE_X_FP8_INREG_GFX12_SRC,
+            ["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"]
+        );
         add!("rmsnorm_f32", kernels::RMSNORM_SRC, ["rmsnorm_f32"]);
         add!(
             "rmsnorm_f32_rowsplit",
@@ -6469,6 +6482,17 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         ],
     ),
     ("sigmoid_mul", &["sigmoid_mul_f32"]),
+    // Q-resident fp8-stream FA out-proj producer with the sigmoid gate copied
+    // out of place (fa_gate_in_place = false) on the closed 27B fp8-KV route:
+    // gate = Some(Rows), awq = None, fp8_prod_inreg(k) default-on. Selected by
+    // rotate_x_mq_fp8_gfx12_batched()'s (gate, awq, inreg) table; absent from the
+    // plan made admit_unplanned refuse VeriLoop-E2 MTP-OFF large-prompt prefill
+    // ("sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 ... outside this load's
+    // planned kernel route"). Registered in entries() above.
+    (
+        "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12",
+        &["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"],
+    ),
     (
         "sigmoid_mul_rotate_x_mq_awq_i4_gfx12_slab",
         &["sigmoid_mul_rotate_x_mq_awq_i4_gfx12_slab"],
@@ -12440,6 +12464,31 @@ extern "C" __global__ void NAMED(int* p) {}
                     .any(|e| e.module() == "qwen35_fa_prep_fp8q_batched_gfx1201"),
                 "closed AR route must plan the gated fp8q fa_prep module"
             );
+            // Q-resident fp8-stream FA out-proj producer: the default-on
+            // gfx1201 fp8-stream + in-register producer folds the sigmoid gate
+            // into the FWHT rotate (gate = Some(Rows), awq = None,
+            // fp8_prod_inreg(k) with k <= 17408). Absent from the plan,
+            // admit_unplanned refused VeriLoop-E2 MTP-OFF large-prompt prefill
+            // ("sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 ... outside this
+            // load's planned kernel route"). The sealed AR route must plan it.
+            assert!(
+                ar_plan
+                    .entries
+                    .iter()
+                    .any(|e| e.module() == "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"),
+                "closed AR route must plan the fp8-stream sigmoid rotate inreg module"
+            );
+            // Registry recipe: the planned entry resolves (route_entries_sealed
+            // corpus lookup) to the in-reg sigmoid fp8 producer source with
+            // exactly its one entry symbol. A missing module or a symbol the
+            // index omits fails the sealed-plan build, so this pins the exact
+            // module + symbol + source triple the loader will compile.
+            assert!(ar_plan.entries.iter().any(|e| matches!(
+                e, PlannedKernel::Hip(entry)
+                if entry.module == "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"
+                    && entry.symbols == ["sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12"]
+                    && entry.source() == kernels::SIGMOID_MUL_MQ_ROTATE_X_FP8_INREG_GFX12_SRC
+            )), "sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12 must plan its registered source+symbol");
         }
     }
 

@@ -1174,7 +1174,6 @@ module	sigmoid_mul_rotate_x_mq_awq_mq4v2_fp8_inreg_gfx12	config-opt-in	Non-defau
 module	sigmoid_mul_rotate_x_mq_awq_mq4v2_fp8_inreg_gil_gfx12	config-opt-in	Non-default configuration: kernel.iu / kernel.gfx; hipfire-arch-qwen35/src/qwen35/prefill.rs:7596-7640
 module	sigmoid_mul_rotate_x_mq4v2_fp8_gfx12	developer-opt-in	Non-default developer override: HIPFIRE_IU4_PREFILL / HIPFIRE_FP8_PROD_INREG; hipfire-arch-qwen35/src/qwen35/prefill.rs:7596-7640
 module	sigmoid_mul_rotate_x_mq4v2_fp8_gil_gfx12	developer-opt-in	Non-default developer override: HIPFIRE_IU4_PREFILL / HIPFIRE_FP8_PROD_INREG; hipfire-arch-qwen35/src/qwen35/prefill.rs:7596-7640
-module	sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gfx12	config-opt-in	Non-default configuration: kernel.iu / kernel.gfx; hipfire-arch-qwen35/src/qwen35/prefill.rs:7596-7640
 module	sigmoid_mul_rotate_x_mq4v2_fp8_inreg_gil_gfx12	config-opt-in	Non-default configuration: kernel.iu / kernel.gfx; hipfire-arch-qwen35/src/qwen35/prefill.rs:7596-7640
 module	silu	developer-opt-in	Requires qwen4-dev-profiles feature and hipfire_profile marker; pipeline/layer_ops.rs:4317
 module	softmax_prob_gather_batched	no-caller	No production caller; only definitions, tests/examples or an unreachable launcher branch remain; hipfire-arch-qwen35/src/mtp_spec.rs:672
