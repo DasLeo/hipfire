@@ -12611,30 +12611,26 @@ extern "C" __global__ void NAMED(int* p) {}
             input.spec = KernelSpecRoute::Ar;
             let ar_plan = route_entries(&input).unwrap();
             assert!(!ar_plan.entries.iter().any(|e| e.module() == module));
-            // The hybrid linear_attn prefill (in_proj_qkv [10240,5120], z/a/b)
-            // runs the iu4-direct MMQ GEMM. The sealed AR route must plan the
-            // default-on raster build, else admit_unplanned refuses it at the
-            // first iu4 dispatch (VeriLoop-E2 MTP-OFF prefill regression).
-            assert!(
-                ar_plan
-                    .entries
-                    .iter()
-                    .any(|e| e.module() == "gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r"),
-                "closed AR route must plan the iu4 g12r module for linear_attn prefill"
-            );
-            // Large-prompt batched FA prefill on this fp8 KV route dispatches the
-            // gated fp8q fa_prep variant (gfx12_fa_prep_fp8q + out-of-place gate
-            // copy, fa_gate_in_place = false). The sealed AR route must plan it,
-            // else admit_unplanned refuses the prefill (VeriLoop-E2 MTP-OFF:
-            // "qwen35_fa_prep_fp8q_batched_gfx1201 ... outside this load's planned
-            // kernel route"). The f32 and fp8q-nogate twins share this fixture.
-            assert!(
-                ar_plan
-                    .entries
-                    .iter()
-                    .any(|e| e.module() == "qwen35_fa_prep_fp8q_batched_gfx1201"),
-                "closed AR route must plan the gated fp8q fa_prep module"
-            );
+            // The sealed AR route must plan these default-on modules or
+            // admit_unplanned refuses at the first dispatch (VeriLoop-E2 MTP-OFF
+            // prefill regressions):
+            //  - gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r: the hybrid linear_attn
+            //    prefill (in_proj_qkv [10240,5120], z/a/b) runs the iu4-direct MMQ
+            //    GEMM.
+            //  - qwen35_fa_prep_fp8q_batched_gfx1201: large-prompt batched FA
+            //    prefill dispatches the gated fp8q fa_prep variant (gfx12_fa_prep_fp8q
+            //    + out-of-place gate copy, fa_gate_in_place = false); the f32 and
+            //    fp8q-nogate twins share this fixture.
+            const AR_ROUTE_DEFAULT_ON_MODULES: [&str; 2] = [
+                "gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r",
+                "qwen35_fa_prep_fp8q_batched_gfx1201",
+            ];
+            for module in AR_ROUTE_DEFAULT_ON_MODULES {
+                assert!(
+                    ar_plan.entries.iter().any(|e| e.module() == module),
+                    "closed AR route must plan {module}"
+                );
+            }
             // Q-resident fp8-stream FA out-proj producer: the default-on
             // gfx1201 fp8-stream + in-register producer folds the sigmoid gate
             // into the FWHT rotate (gate = Some(Rows), awq = None,
