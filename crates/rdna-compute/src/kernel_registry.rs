@@ -6338,6 +6338,20 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         "gemm_hfq4g256_residual_wmma_gfx12_mq4v2",
         &["gemm_mq4g256v2_residual_wmma_gfx12"],
     ),
+    // iu4-direct MMQ prefill for the hybrid linear_attn projections
+    // (in_proj_qkv [10240,5120], z/a/b and the small tails): the default-on
+    // banded-raster build. Without this the sealed AR route's first iu4
+    // dispatch is refused by admit_unplanned (VeriLoop-E2 MTP-OFF prefill).
+    (
+        "gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r",
+        &[
+            "gemm_mq4g256v2_gate_up_silu_mmq_iu4_g12r",
+            "gemm_mq4g256v2_residual_mmq_iu4_full_add_g12r",
+            "gemm_mq4g256v2_residual_mmq_iu4_full_set_g12r",
+            "gemm_mq4g256v2_residual_mmq_iu4_g12r",
+            "quantize_int4_mmq_ds128",
+        ],
+    ),
     (
         "gemm_mq4g256v2_residual_wmma_gfx12_vt",
         &[
@@ -12387,11 +12401,19 @@ extern "C" __global__ void NAMED(int* p) {}
                 module: m, image: i, symbols: s, ..
             } if *m == module && *i == image && *s == symbols)));
             input.spec = KernelSpecRoute::Ar;
-            assert!(!route_entries(&input)
-                .unwrap()
-                .entries
-                .iter()
-                .any(|e| e.module() == module));
+            let ar_plan = route_entries(&input).unwrap();
+            assert!(!ar_plan.entries.iter().any(|e| e.module() == module));
+            // The hybrid linear_attn prefill (in_proj_qkv [10240,5120], z/a/b)
+            // runs the iu4-direct MMQ GEMM. The sealed AR route must plan the
+            // default-on raster build, else admit_unplanned refuses it at the
+            // first iu4 dispatch (VeriLoop-E2 MTP-OFF prefill regression).
+            assert!(
+                ar_plan
+                    .entries
+                    .iter()
+                    .any(|e| e.module() == "gemm_mq4g256v2_residual_mmq_iu4_gfx12_g12r"),
+                "closed AR route must plan the iu4 g12r module for linear_attn prefill"
+            );
         }
     }
 
