@@ -6303,6 +6303,23 @@ const QWEN36_27B_GFX1201_AR_HIP: &[RouteHip] = &[
         "attention_fp8_e4m3_kv_batched",
         &["attention_fp8_e4m3_kv_batched"],
     ),
+    // Native-fp8 split-KV FA2 verifier attention (gfx1201 H24/KV4/D256): the
+    // AR batched prefill (forward_prefill_batch_multi / chunked serve prefill)
+    // dispatches AttnFp8E4m3KvBatchedMasked through the split-KV fp8 path at
+    // live_ctx >= 8192 with a 2..=16-row tail, so this verifier is needed on the
+    // AR route too, not only MTP verify. Absent from the AR plan, admit_unplanned
+    // refused VeriLoop-E2 --spec off long/multiturn prefill
+    // ("attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201 ... outside this load's
+    // planned kernel route").
+    (
+        "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+        &[
+            "attention_fp8_e4m3_fa2_gqa_f16_gfx1201",
+            "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+            "attention_fp8_e4m3_fa2_gqa_merge_lse_gfx1201",
+            "attention_fp8_e4m3_fa2_q_preconvert_lse_gfx1201",
+        ],
+    ),
     (
         "attention_verify_gqa_gfx1201",
         &[
@@ -12718,14 +12735,33 @@ extern "C" __global__ void NAMED(int* p) {}
             }
             // Native-fp8 split-KV FA2 verifier attention: the MTP (K+1)-row
             // verify at live_ctx >= 8192 dispatches AttnFp8E4m3KvBatchedMasked
-            // through the split-KV fp8 path (H24/KV4/D256, batch 2..=16); AR
-            // decode (batch 1) never reaches it, so it is MTP-plan-only.
-            // Absent from the MTP plan, admit_unplanned refused VeriLoop-E2
-            // --spec mtp large-context step ("attention_fp8_e4m3_fa2_gqa
-            // _partial_lse_gfx1201 ... outside this load's planned kernel
-            // route"). The sealed MTP route must plan it (one module object
-            // carries the partial/merge/preconvert symbols; the f16 entry
-            // shares the source but is bound by the Q0 launcher, not here).
+            // through the split-KV fp8 path (H24/KV4/D256, batch 2..=16). The AR
+            // batched prefill reaches the same split-KV path on a 2..=16-row
+            // tail at live_ctx >= 8192 (long / multiturn serve prefill), so the
+            // sealed AR route must plan it too, not MTP-only. Absent from a
+            // plan, admit_unplanned refused VeriLoop-E2 --spec off
+            // long/multiturn prefill and --spec mtp large-context step
+            // ("attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201 ... outside this
+            // load's planned kernel route"). One module object carries the
+            // partial/merge/preconvert symbols; the f16 entry shares the source
+            // but is bound by the Q0 launcher, not here.
+            assert!(
+                ar_plan.entries
+                    .iter()
+                    .any(|e| e.module() == "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201"),
+                "closed AR route must plan the fp8 split-KV FA2 verifier attention module"
+            );
+            assert!(ar_plan.entries.iter().any(|e| matches!(
+                e, PlannedKernel::Hip(entry)
+                if entry.module == "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201"
+                    && entry.symbols == [
+                        "attention_fp8_e4m3_fa2_gqa_f16_gfx1201",
+                        "attention_fp8_e4m3_fa2_gqa_partial_lse_gfx1201",
+                        "attention_fp8_e4m3_fa2_gqa_merge_lse_gfx1201",
+                        "attention_fp8_e4m3_fa2_q_preconvert_lse_gfx1201"
+                    ]
+                    && entry.source() == kernels::ATTENTION_FP8_E4M3_FA2_GQA_SPLIT_LSE_GFX1201_SRC
+            )), "fp8 split-KV FA2 verifier must plan its registered source+symbols on the AR route");
             assert!(
                 plan.entries
                     .iter()
